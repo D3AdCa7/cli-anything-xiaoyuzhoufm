@@ -1,0 +1,3 @@
+#!/bin/bash
+# Shortcut wrapper for cli-anything-xiaoyuzhoufm
+exec python3 -m cli_anything.xiaoyuzhoufm "$@"

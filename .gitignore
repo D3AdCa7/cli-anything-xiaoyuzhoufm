@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.env
+auth.json
+session.json
+downloads/
+*.m4a
+*.mp3
+*.wav
+.DS_Store
