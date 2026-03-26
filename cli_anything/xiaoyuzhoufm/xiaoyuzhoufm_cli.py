@@ -234,6 +234,44 @@ def podcast_popular(ctx, pid):
             click.echo(f"       eid={ep.get('eid', '?')}")
 
 
+@podcast.command("rss")
+@click.argument("pid_or_name")
+@click.option("--episodes/--no-episodes", default=True, help="Include episode list.")
+@click.pass_context
+def podcast_rss(ctx, pid_or_name, episodes):
+    """Find RSS feed for a podcast (via iTunes). No auth needed.
+
+    Accepts either a pid (24-char hex) or a podcast name.
+    This bypasses the 15-episode limit — RSS feeds contain ALL episodes.
+    """
+    client: XYZClient = ctx.obj["client"]
+    is_pid = bool(re.match(r'^[0-9a-f]{24}$', pid_or_name))
+    result = client.podcast_rss(
+        pid=pid_or_name if is_pid else None,
+        name=pid_or_name if not is_pid else None,
+    )
+
+    if not episodes:
+        result.pop("episodes", None)
+
+    if ctx.obj["json_mode"]:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        click.echo(f"播客: {result.get('title', '?')}")
+        click.echo(f"RSS:  {result.get('feedUrl', 'N/A')}")
+        click.echo(f"iTunes ID: {result.get('itunesId', '?')}")
+        ep_count = result.get('episodeCount', 0)
+        click.echo(f"节目数: {ep_count}")
+        if episodes and result.get("episodes"):
+            click.echo()
+            for i, ep in enumerate(result["episodes"], 1):
+                dur = ep.get("duration", "?")
+                click.echo(f"  {i:3d}. [{dur}] {ep.get('title', '?')}")
+                if i >= 20 and not ctx.obj["json_mode"]:
+                    click.echo(f"  ... 共 {ep_count} 集 (用 --json 查看全部)")
+                    break
+
+
 # ── Episode ──────────────────────────────────────────────────────────
 
 @cli.group()

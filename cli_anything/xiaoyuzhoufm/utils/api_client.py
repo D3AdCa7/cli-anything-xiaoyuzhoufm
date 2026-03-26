@@ -354,3 +354,75 @@ class XYZClient:
 
     def category_list(self) -> dict:
         return self._api_post("/v1/category/list-all", json_body={}, auth_required=True)
+
+    # ── RSS ───────────────────────────────────────────────────────────
+
+    def podcast_rss(self, pid: str | None = None, name: str | None = None) -> dict:
+        """Find RSS feed URL for a podcast via iTunes lookup. No auth needed.
+
+        Provide either pid (to get podcast title first) or name directly.
+        Returns {feedUrl, title, itunesId, episodes: [{title, pubDate, audioUrl, duration}]}.
+        """
+        import xml.etree.ElementTree as ET
+
+        # Step 1: Get podcast name
+        if pid and not name:
+            data = self.podcast_get(pid).get("data", {})
+            name = data.get("title", "")
+        if not name:
+            raise RuntimeError("Need either pid or name to find RSS feed.")
+
+        # Step 2: Search iTunes for feed URL
+        resp = self.web_session.get(
+            "https://itunes.apple.com/search",
+            params={"term": name, "media": "podcast", "limit": 5},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"iTunes search failed: {resp.status_code}")
+
+        results = resp.json().get("results", [])
+        if not results:
+            raise RuntimeError(f"No podcast found on iTunes for: {name}")
+
+        # Find best match (prefer exact title match)
+        best = results[0]
+        for r in results:
+            if r.get("collectionName", "").strip() == name.strip():
+                best = r
+                break
+
+        feed_url = best.get("feedUrl", "")
+        if not feed_url:
+            raise RuntimeError(f"No RSS feed URL for: {best.get('collectionName', '?')}")
+
+        result = {
+            "title": best.get("collectionName", ""),
+            "feedUrl": feed_url,
+            "itunesId": best.get("collectionId"),
+        }
+
+        # Step 3: Fetch and parse RSS feed (use simple UA — some hosts block Chrome UA)
+        try:
+            rss_resp = requests.get(feed_url, headers={"User-Agent": "Podcasts/1.0"}, timeout=30)
+            if rss_resp.status_code == 200 and "<item" in rss_resp.text:
+                root = ET.fromstring(rss_resp.text)
+                channel = root.find("channel")
+                items = channel.findall("item") if channel is not None else []
+                episodes = []
+                itunes_ns = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
+                for item in items:
+                    enc = item.find("enclosure")
+                    episodes.append({
+                        "title": (item.find("title").text or "") if item.find("title") is not None else "",
+                        "pubDate": (item.find("pubDate").text or "") if item.find("pubDate") is not None else "",
+                        "audioUrl": enc.attrib.get("url", "") if enc is not None else "",
+                        "duration": (item.find(f"{itunes_ns}duration").text or "") if item.find(f"{itunes_ns}duration") is not None else "",
+                        "size": int(enc.attrib.get("length", 0)) if enc is not None else 0,
+                    })
+                result["episodeCount"] = len(episodes)
+                result["episodes"] = episodes
+        except Exception as e:
+            result["rssError"] = str(e)
+
+        return result

@@ -17,20 +17,25 @@ Most commands need a **pid** (24-char hex string). Since the search API requires
 1. **Web search** for: `site:xiaoyuzhoufm.com <podcast name>`
 2. Extract pid from the URL: `https://www.xiaoyuzhoufm.com/podcast/<pid>`
 
-Example: URL `https://www.xiaoyuzhoufm.com/podcast/696186a3f83ec0a898b875c6` → pid = `696186a3f83ec0a898b875c6`
+Example: URL `.../podcast/696186a3f83ec0a898b875c6` → pid = `696186a3f83ec0a898b875c6`
 
 Similarly, episode URLs contain eid: `/episode/<eid>`
 
 ## Commands — Quick Reference
 
-### No Auth Required (most useful for agents)
+### No Auth Required
 
 ```bash
 # Podcast info
 $XYZ --json podcast info <pid>
 
-# List all episodes (returns JSON array with eid, title, duration, audio URL)
+# List episodes (latest ~15 without login)
 $XYZ --json podcast episodes <pid> --limit 100
+
+# ⭐ RSS feed — lists ALL episodes, bypasses 15-episode limit
+$XYZ --json podcast rss <pid>              # by pid
+$XYZ --json podcast rss "播客名"            # by name (iTunes lookup)
+$XYZ podcast rss <pid> --no-episodes       # only show feed URL
 
 # Episode details (includes audio URL)
 $XYZ --json episode info <eid>
@@ -48,16 +53,16 @@ $XYZ play <eid>
 $XYZ --json comment list <eid>
 ```
 
-### Batch Operations (most efficient for agents)
+### Batch Operations
 
 ```bash
 # Download ALL episodes of a podcast to a folder — ONE command
 $XYZ --json batch download <pid> -o /path/to/dir
 
-# Get ALL shownotes for a podcast — ONE command, ONE JSON output
+# Get ALL shownotes — ONE command, ONE JSON output
 $XYZ --json batch shownotes <pid>
 
-# Save all shownotes to a file
+# Save all shownotes to a text file
 $XYZ batch shownotes <pid> -o shownotes.txt
 ```
 
@@ -72,47 +77,66 @@ $XYZ --json subscribe list               # Subscriptions
 $XYZ --json user history                 # Listening history
 ```
 
-## Agent Workflow Templates
+## The 15-Episode Limit and How to Bypass It
 
-### Template A: "Download all episodes of podcast X"
+Without login, `podcast episodes` only returns the latest ~15 episodes.
+
+**Solution: `podcast rss`** — Looks up the podcast's RSS feed via iTunes and returns ALL episodes with audio URLs. Works for any podcast listed on Apple Podcasts.
 
 ```bash
-# 1. Find pid via web search (see Step 0)
-# 2. One command does everything:
-$XYZ --json batch download <pid> -o ./downloads
+# Get ALL episodes (not just 15) — no login needed
+$XYZ --json podcast rss <pid>
 ```
 
-Returns JSON with download status for each episode, output directory, and file paths.
+Returns JSON:
+```json
+{
+  "title": "播客名",
+  "feedUrl": "https://feed.xyzfm.space/xxx",
+  "episodeCount": 159,
+  "episodes": [
+    {"title": "...", "pubDate": "Mon, 09 Mar 2026 23:00:00 GMT",
+     "audioUrl": "https://...", "duration": "1:29:30", "size": 214814442}
+  ]
+}
+```
 
-### Template B: "Get all content from podcast X for analysis"
+Note: RSS audio URLs may be from ximalaya CDN or xyzfm CDN (same content, different host). RSS does NOT include playCount — use `episode info <eid>` for that.
+
+## Agent Workflow Templates
+
+### Template A: "List ALL episodes of a podcast" (best approach)
 
 ```bash
-# 1. Get all shownotes in one call:
+# 1. Find pid (web search or known)
+# 2. Use RSS to get complete episode list:
+$XYZ --json podcast rss <pid>
+```
+
+### Template B: "Download all episodes"
+
+```bash
+# For small podcasts (<15 episodes):
+$XYZ --json batch download <pid> -o ./downloads
+
+# For large podcasts: get audio URLs from RSS, then download with curl
+$XYZ --json podcast rss <pid>
+# Parse JSON, extract audioUrl from each episode, download with curl
+```
+
+### Template C: "Get all shownotes for analysis"
+
+```bash
 $XYZ --json batch shownotes <pid>
 ```
 
-Returns JSON: `{"podcast": "...", "episodes": [{"eid": "...", "title": "...", "shownotes": "..."}]}`
-
-### Template C: "Get audio + text for specific episodes"
-
-```bash
-# 1. List episodes to find eids:
-$XYZ --json podcast episodes <pid> --limit 20
-
-# 2. For each eid of interest:
-$XYZ episode download <eid> -o episode.m4a
-$XYZ episode shownotes <eid>
-```
-
-### Template D: "Download and analyze a podcast I only know by name"
+### Template D: "Find a podcast I only know by name"
 
 ```bash
 # 1. Web search: site:xiaoyuzhoufm.com "podcast name"
 # 2. Extract pid from URL
-# 3. Download all:
-$XYZ --json batch download <pid> -o ./output
-# 4. Get all shownotes for analysis:
-$XYZ --json batch shownotes <pid>
+# 3. Get info: $XYZ --json podcast info <pid>
+# 4. List all: $XYZ --json podcast rss <pid>
 ```
 
 ## Output Structures
@@ -123,9 +147,15 @@ $XYZ --json batch shownotes <pid>
   "enclosure": {"url": "https://media.xyzcdn.net/xxx.m4a"}, "playCount": 1234}]
 ```
 
+### `podcast rss` → JSON with ALL episodes
+```json
+{"title": "...", "feedUrl": "https://...", "itunesId": 12345, "episodeCount": 103,
+ "episodes": [{"title": "...", "pubDate": "...", "audioUrl": "https://...", "duration": "01:07:57", "size": 0}]}
+```
+
 ### `batch download` → JSON summary
 ```json
-{"podcast": "...", "pid": "...", "output_dir": "./downloads/podcast_name",
+{"podcast": "...", "pid": "...", "output_dir": "./downloads/name",
  "total": 13, "downloaded": 13, "existed": 0, "failed": 0,
  "files": [{"index": 1, "title": "...", "status": "ok", "path": "...", "size": 37000000}]}
 ```
@@ -136,18 +166,13 @@ $XYZ --json batch shownotes <pid>
  "episodes": [{"eid": "...", "title": "...", "duration": 2302, "pubDate": "...", "shownotes": "plain text..."}]}
 ```
 
-## Important Limitations
-
-- **Without login, only the latest ~15 episodes are available** per podcast. This affects `podcast episodes`, `batch download`, and `batch shownotes`. For podcasts with <15 episodes (like Emma的碎碎念 with 13), this covers everything. For large podcasts (300+ episodes), you only get the most recent ~15.
-- To access ALL episodes of a large podcast, the user must login first (`auth login`).
-- `episode info` and `episode shownotes` work for ANY episode if you have the eid (even old ones).
-
 ## Key Facts
 
-- **No auth needed** for: podcast info, episodes (latest ~15), shownotes, download, play, comments
-- **Auth needed** for: search, transcript, subscribe, history, discover, full episode pagination
+- **No auth needed** for: podcast info, episodes (latest ~15), rss (ALL), shownotes, download, play, comments
+- **Auth needed** for: search, transcript, subscribe, history, discover
+- `podcast rss` bypasses the 15-episode limit — returns ALL episodes via iTunes/RSS lookup
 - Audio files are M4A format, direct CDN links, downloadable with curl
 - pid/eid are 24-character hex strings (MongoDB ObjectIDs)
 - `batch download` skips already-downloaded files (idempotent)
-- `batch shownotes` fetches detailed shownotes per episode (makes N+1 API calls internally but returns one JSON)
-- If you know specific eids (e.g. from web search), you can always use `episode info/shownotes/download` directly — the ~15 limit only affects listing commands
+- RSS lookup works for any podcast listed on Apple Podcasts (most are)
+- RSS audio URLs may differ from xiaoyuzhoufm CDN URLs but contain the same audio content
